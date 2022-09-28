@@ -63,7 +63,6 @@
 #include <sdf/sdf.hh>
 
 #include <ros/ros.h>
-
 namespace gazebo
 {
 
@@ -101,6 +100,7 @@ void GazeboRosDiffDrive::Load ( physics::ModelPtr _parent, sdf::ElementPtr _sdf 
     gazebo_ros_->getParameter<double> ( wheel_accel, "wheelAcceleration", 0.0 );
     gazebo_ros_->getParameter<double> ( wheel_torque, "wheelTorque", 5.0 );
     gazebo_ros_->getParameter<double> ( update_rate_, "updateRate", 100.0 );
+    gazebo_ros_->getParameter<double> ( encoder_noise_factor_, "encoderNoiseFactor", 0.0 );
     std::map<std::string, OdomSource> odomOptions;
     odomOptions["encoder"] = ENCODER;
     odomOptions["world"] = WORLD;
@@ -117,7 +117,7 @@ void GazeboRosDiffDrive::Load ( physics::ModelPtr _parent, sdf::ElementPtr _sdf 
 
     this->publish_tf_ = true;
     if (!_sdf->HasElement("publishTf")) {
-      ROS_WARN_NAMED("diff_drive", "GazeboRosDiffDrive Plugin (ns = %s) missing <publishTf>, defaults to %d",
+      ROS_INFO_NAMED("diff_drive", "GazeboRosDiffDrive Plugin (ns = %s) missing <publishTf>, defaults to %d",
           this->robot_namespace_.c_str(), this->publish_tf_);
     } else {
       this->publish_tf_ = _sdf->GetElement("publishTf")->Get<bool>();
@@ -350,8 +350,14 @@ void GazeboRosDiffDrive::QueueThread()
 
 void GazeboRosDiffDrive::UpdateOdometryEncoder()
 {
+
+    unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
+    std::default_random_engine generator (seed);
+    std::normal_distribution<double> distribution_l (0.0,1);
+    std::normal_distribution<double> distribution_r (0.0,1);
     double vl = joints_[LEFT]->GetVelocity ( 0 );
     double vr = joints_[RIGHT]->GetVelocity ( 0 );
+    
 #if GAZEBO_MAJOR_VERSION >= 8
     common::Time current_time = parent->GetWorld()->SimTime();
 #else
@@ -360,19 +366,23 @@ void GazeboRosDiffDrive::UpdateOdometryEncoder()
     double seconds_since_last_update = ( current_time - last_odom_update_ ).Double();
     last_odom_update_ = current_time;
 
-    double b = wheel_separation_;
 
-    // Book: Sigwart 2011 Autonompus Mobile Robots page:337
+    double b = wheel_separation_;
+    
+    // Book: Sigwart 2011 Autonomous Mobile Robots page:337
     double sl = vl * ( wheel_diameter_ / 2.0 ) * seconds_since_last_update;
     double sr = vr * ( wheel_diameter_ / 2.0 ) * seconds_since_last_update;
-    double ssum = sl + sr;
 
+    sl += sqrt(abs(sl)*encoder_noise_factor_) * distribution_l(generator);
+    sr += sqrt(abs(sr)*encoder_noise_factor_) * distribution_r(generator);
+    double ssum = sl + sr;
     double sdiff = sr - sl;
 
     double dx = ( ssum ) /2.0 * cos ( pose_encoder_.theta + ( sdiff ) / ( 2.0*b ) );
     double dy = ( ssum ) /2.0 * sin ( pose_encoder_.theta + ( sdiff ) / ( 2.0*b ) );
     double dtheta = ( sdiff ) /b;
 
+    
     pose_encoder_.x += dx;
     pose_encoder_.y += dy;
     pose_encoder_.theta += dtheta;

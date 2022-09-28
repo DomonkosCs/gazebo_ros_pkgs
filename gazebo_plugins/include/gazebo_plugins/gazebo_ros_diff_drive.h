@@ -103,8 +103,9 @@ namespace gazebo {
       double wheel_diameter_;
       double wheel_torque;
       double wheel_speed_[2];
-	  double wheel_accel;
+      double wheel_accel;
       double wheel_speed_instr_[2];
+      double encoder_noise_factor_;
 
       std::vector<physics::JointPtr> joints_;
 
